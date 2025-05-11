@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"cloud.google.com/go/firestore"
+	firebase "firebase.google.com/go/v4"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/api/option"
 )
 
 type User struct {
@@ -46,6 +51,22 @@ type Claims struct {
 
 var db *sql.DB
 var jwtKey = []byte("your_secret_key")
+var firestoreClient *firestore.Client
+
+func initFirebase() error {
+	ctx := context.Background()
+	opt := option.WithCredentialsFile("./firebase-credentials.json")
+	app, err := firebase.NewApp(ctx, nil, opt)
+	if err != nil {
+		return fmt.Errorf("error initializing firebase app: %v", err)
+	}
+
+	firestoreClient, err = app.Firestore(ctx)
+	if err != nil {
+		return fmt.Errorf("error initializing firestore client: %v", err)
+	}
+	return nil
+}
 
 func main() {
 	var err error
@@ -54,6 +75,12 @@ func main() {
 		panic(err)
 	}
 	defer db.Close()
+
+	// Initialize Firebase
+	if err := initFirebase(); err != nil {
+		panic(err)
+	}
+	defer firestoreClient.Close()
 
 	r := gin.Default()
 
@@ -285,16 +312,58 @@ func updateBirthday(c *gin.Context) {
 }
 
 func backupContacts(c *gin.Context) {
+	userID, _ := c.Get("user_id")
 	var backupReq BackupRequest
 	if err := c.ShouldBindJSON(&backupReq); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Here you would implement the actual backup logic to Firebase or another cloud service
-	// For now, we'll just return a success message
+	ctx := context.Background()
+	batch := firestoreClient.Batch()
+	userRef := firestoreClient.Collection("users").Doc(fmt.Sprintf("%d", userID))
+	contactsRef := userRef.Collection("contacts")
+
+	// Delete existing contacts
+	existingContacts, err := contactsRef.Documents(ctx).GetAll()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to fetch existing contacts: %v", err),
+		})
+		return
+	}
+
+	for _, doc := range existingContacts {
+		batch.Delete(doc.Ref)
+	}
+
+	// Add new contacts
+	for _, contact := range backupReq.Contacts {
+		contactData := map[string]interface{}{
+			"name":             contact.Name,
+			"phone":            contact.Phone,
+			"encrypted_phone":  contact.EncryptedPhone,
+			"tags":             contact.Tags,
+			"last_interaction": contact.LastInteraction,
+			"birthday":         contact.Birthday,
+			"backup_timestamp": time.Now(),
+		}
+		docRef := contactsRef.NewDoc()
+		batch.Set(docRef, contactData)
+	}
+
+	// Commit the batch
+	_, err = batch.Commit(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to backup contacts: %v", err),
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message":        "Backup initiated successfully",
+		"message":        "Backup completed successfully",
 		"contacts_count": len(backupReq.Contacts),
+		"timestamp":      time.Now(),
 	})
 }
