@@ -299,39 +299,78 @@ class AuthViewModel: ObservableObject {
             return
         }
         
-        let url = URL(string: "http://localhost:8080/backup")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        // First, backup to Firebase
+        FirebaseService.shared.backupContacts(contacts) { [weak self] result in
             guard let self = self else { return }
             
             DispatchQueue.main.async {
-                if let error = error {
-                    self.errorMessage = "Failed to backup contacts: \(error.localizedDescription)"
-                    return
-                }
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    self.errorMessage = "Invalid server response"
-                    return
-                }
-                
-                if httpResponse.statusCode == 200 {
-                    self.errorMessage = "Contacts backed up successfully"
-                } else {
-                    if let data = data,
-                       let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                       let errorMessage = json["error"] as? String {
-                        self.errorMessage = "Failed to backup contacts: \(errorMessage)"
-                    } else {
-                        self.errorMessage = "Failed to backup contacts: Server error"
-                    }
+                switch result {
+                case .success:
+                    // Then, notify the backend about the backup
+                    let url = URL(string: "http://localhost:8080/backup")!
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    
+                    URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                        guard let self = self else { return }
+                        
+                        DispatchQueue.main.async {
+                            if let error = error {
+                                self.errorMessage = "Failed to backup contacts: \(error.localizedDescription)"
+                                return
+                            }
+                            
+                            guard let httpResponse = response as? HTTPURLResponse else {
+                                self.errorMessage = "Invalid server response"
+                                return
+                            }
+                            
+                            if httpResponse.statusCode == 200 {
+                                self.errorMessage = "Contacts backed up successfully"
+                            } else {
+                                if let data = data,
+                                   let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                                   let errorMessage = json["error"] as? String {
+                                    self.errorMessage = "Failed to backup contacts: \(errorMessage)"
+                                } else {
+                                    self.errorMessage = "Failed to backup contacts: Server error"
+                                }
+                            }
+                        }
+                    }.resume()
+                    
+                case .failure(let error):
+                    self.errorMessage = "Failed to backup contacts to Firebase: \(error.localizedDescription)"
                 }
             }
-        }.resume()
+        }
+    }
+    
+    func restoreContacts() {
+        guard let token = token else {
+            DispatchQueue.main.async {
+                self.errorMessage = "Not authenticated"
+            }
+            return
+        }
+        
+        FirebaseService.shared.restoreContacts { [weak self] result in
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let restoredContacts):
+                    // Update local contacts
+                    self.contacts = restoredContacts
+                    self.errorMessage = "Contacts restored successfully"
+                    
+                case .failure(let error):
+                    self.errorMessage = "Failed to restore contacts: \(error.localizedDescription)"
+                }
+            }
+        }
     }
     
     func fetchContacts(completion: @escaping ([Contact]) -> Void) {

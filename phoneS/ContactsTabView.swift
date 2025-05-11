@@ -154,6 +154,7 @@ struct StatRow: View {
 struct SettingsView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @State private var showingBackupAlert = false
+    @State private var showingRestoreAlert = false
     
     var body: some View {
         NavigationView {
@@ -168,6 +169,10 @@ struct SettingsView: View {
                 Section(header: Text("Data Management")) {
                     Button("Backup Contacts") {
                         showingBackupAlert = true
+                    }
+                    
+                    Button("Restore Contacts") {
+                        showingRestoreAlert = true
                     }
                 }
                 
@@ -187,7 +192,15 @@ struct SettingsView: View {
                     authViewModel.backupContacts()
                 }
             } message: {
-                Text("This will create a backup of all your contacts.")
+                Text("This will create a backup of all your contacts to Firebase.")
+            }
+            .alert("Restore Contacts", isPresented: $showingRestoreAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Restore") {
+                    authViewModel.restoreContacts()
+                }
+            } message: {
+                Text("This will restore your contacts from Firebase. Any local changes will be overwritten.")
             }
         }
     }
