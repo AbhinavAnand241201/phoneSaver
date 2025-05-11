@@ -1,24 +1,29 @@
-//
-//  ContentView.swift
-//  phoneS
-//
-//  Created by ABHINAV ANAND  on 11/05/25.
-//
-
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject var authViewModel: AuthViewModel
+    @State private var isTransitioning = false
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if authViewModel.isAuthenticated {
+                ContactsTabView()
+                    .transition(.opacity)
+            } else {
+                AuthView()
+                    .transition(.opacity)
+            }
         }
-        .padding()
+        .animation(.easeInOut(duration: 0.3), value: authViewModel.isAuthenticated)
+        .onChange(of: authViewModel.isAuthenticated) { newValue in
+            print("Authentication state changed: \(newValue)")
+        }
     }
 }
 
-#Preview {
-    ContentView()
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+            .environmentObject(AuthViewModel())
+    }
 }
