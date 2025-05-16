@@ -7,11 +7,12 @@ struct AuthView: View {
     @State private var showLogo = false
     @State private var showFields = false
     @State private var showButtons = false
+    @State private var isKeyboardVisible = false
     
     var body: some View {
         NavigationView {
             ZStack {
-                // Animated background with subtle gradient
+                // Animated background
                 LinearGradient(gradient: Gradient(colors: [
                     Color(hex: "F8F9FA"),
                     Color(hex: "E9ECEF")
@@ -24,86 +25,92 @@ struct AuthView: View {
                         }
                     }
                 
-                VStack(spacing: 30) {
-                    // Logo and Title with fade-in animation
-                    VStack(spacing: 15) {
-                        Image(systemName: "phone.circle.fill")
-                            .resizable()
-                            .frame(width: 70, height: 70)
-                            .foregroundColor(Color(hex: "4361EE"))
-                            .opacity(showLogo ? 1 : 0)
-                            .scaleEffect(showLogo ? 1 : 0.8)
-                        
-                        Text("PhoneSaver")
-                            .font(.system(size: 36, weight: .medium, design: .rounded))
-                            .foregroundColor(Color(hex: "212529"))
-                            .opacity(showLogo ? 1 : 0)
-                    }
-                    .padding(.top, 60)
-                    
-                    // Input Fields with slide-up animation
-                    VStack(spacing: 16) {
-                        CustomTextField(text: $authViewModel.email,
-                                     placeholder: "Email",
-                                     systemImage: "envelope.fill")
-                            .offset(y: showFields ? 0 : 50)
-                            .opacity(showFields ? 1 : 0)
-                        
-                        CustomSecureField(text: $authViewModel.password,
-                                        placeholder: "Password",
-                                        systemImage: "lock.fill")
-                            .offset(y: showFields ? 0 : 50)
-                            .opacity(showFields ? 1 : 0)
-                    }
-                    .padding(.horizontal)
-                    
-                    // Error Message with fade animation
-                    if let errorMessage = authViewModel.errorMessage {
-                        Text(errorMessage)
-                            .foregroundColor(Color(hex: "DC3545"))
-                            .font(.system(size: 14, weight: .medium))
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 16)
-                            .background(Color(hex: "DC3545").opacity(0.1))
-                            .cornerRadius(8)
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                    
-                    // Loading Indicator
-                    if authViewModel.isLoading {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                            .tint(Color(hex: "4361EE"))
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                    
-                    // Action Buttons with slide-up animation
-                    VStack(spacing: 12) {
-                        Button(action: {
-                            withAnimation {
-                                authViewModel.signup()
-                            }
-                        }) {
-                            AuthButtonView(title: "Sign Up", color: Color(hex: "4361EE"))
+                ScrollView {
+                    VStack(spacing: 30) {
+                        // Logo and Title
+                        VStack(spacing: 15) {
+                            Image(systemName: "phone.circle.fill")
+                                .resizable()
+                                .frame(width: 70, height: 70)
+                                .foregroundColor(Color(hex: "4361EE"))
+                                .opacity(showLogo ? 1 : 0)
+                                .scaleEffect(showLogo ? 1 : 0.8)
+                            
+                            Text("PhoneSaver")
+                                .font(.system(size: 36, weight: .medium, design: .rounded))
+                                .foregroundColor(Color(hex: "212529"))
+                                .opacity(showLogo ? 1 : 0)
                         }
-                        .offset(y: showButtons ? 0 : 50)
-                        .opacity(showButtons ? 1 : 0)
+                        .padding(.top, isKeyboardVisible ? 20 : 60)
                         
-                        Button(action: {
-                            withAnimation {
-                                authViewModel.login()
-                            }
-                        }) {
-                            AuthButtonView(title: "Log In", color: Color(hex: "4CC9F0"))
+                        // Input Fields
+                        VStack(spacing: 16) {
+                            CustomTextField(text: $authViewModel.email,
+                                         placeholder: "Email",
+                                         systemImage: "envelope.fill",
+                                         keyboardType: .emailAddress)
+                                .offset(y: showFields ? 0 : 50)
+                                .opacity(showFields ? 1 : 0)
+                                .textContentType(.emailAddress)
+                                .autocapitalization(.none)
+                            
+                            CustomSecureField(text: $authViewModel.password,
+                                            placeholder: "Password",
+                                            systemImage: "lock.fill")
+                                .offset(y: showFields ? 0 : 50)
+                                .opacity(showFields ? 1 : 0)
+                                .textContentType(isSignUp ? .newPassword : .password)
                         }
-                        .offset(y: showButtons ? 0 : 50)
-                        .opacity(showButtons ? 1 : 0)
+                        .padding(.horizontal)
+                        
+                        // Error Message
+                        if let errorMessage = authViewModel.errorMessage {
+                            Text(errorMessage)
+                                .foregroundColor(Color(hex: "DC3545"))
+                                .font(.system(size: 14, weight: .medium))
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 16)
+                                .background(Color(hex: "DC3545").opacity(0.1))
+                                .cornerRadius(8)
+                                .transition(.scale.combined(with: .opacity))
+                        }
+                        
+                        // Loading Indicator
+                        if authViewModel.isLoading {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                                .tint(Color(hex: "4361EE"))
+                                .transition(.scale.combined(with: .opacity))
+                        }
+                        
+                        // Action Buttons
+                        VStack(spacing: 12) {
+                            Button(action: {
+                                if validateInput() {
+                                    authViewModel.signup()
+                                }
+                            }) {
+                                AuthButtonView(title: "Sign Up", color: Color(hex: "4361EE"))
+                            }
+                            .offset(y: showButtons ? 0 : 50)
+                            .opacity(showButtons ? 1 : 0)
+                            
+                            Button(action: {
+                                if validateInput() {
+                                    authViewModel.login()
+                                }
+                            }) {
+                                AuthButtonView(title: "Log In", color: Color(hex: "4CC9F0"))
+                            }
+                            .offset(y: showButtons ? 0 : 50)
+                            .opacity(showButtons ? 1 : 0)
+                        }
+                        .padding(.horizontal)
+                        
+                        Spacer()
                     }
-                    .padding(.horizontal)
-                    
-                    Spacer()
+                    .padding()
                 }
-                .padding()
             }
             .navigationBarHidden(true)
             .onAppear {
@@ -117,15 +124,52 @@ struct AuthView: View {
                     showButtons = true
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                withAnimation {
+                    isKeyboardVisible = true
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                withAnimation {
+                    isKeyboardVisible = false
+                }
+            }
         }
+    }
+    
+    private func validateInput() -> Bool {
+        // Email validation
+        let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
+        let emailPredicate = NSPredicate(format:"SELF MATCHES %@", emailRegex)
+        guard emailPredicate.evaluate(with: authViewModel.email) else {
+            authViewModel.errorMessage = "Please enter a valid email address"
+            return false
+        }
+        
+        // Password validation
+        guard authViewModel.password.count >= 8 else {
+            authViewModel.errorMessage = "Password must be at least 8 characters long"
+            return false
+        }
+        
+        // Password strength validation
+        let passwordRegex = "^(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$&*])(?=.*[a-z]).{8,}$"
+        let passwordPredicate = NSPredicate(format:"SELF MATCHES %@", passwordRegex)
+        if isSignUp && !passwordPredicate.evaluate(with: authViewModel.password) {
+            authViewModel.errorMessage = "Password must contain at least one uppercase letter, one number, and one special character"
+            return false
+        }
+        
+        return true
     }
 }
 
-// Custom TextField with modern design
+// MARK: - Supporting Views
 struct CustomTextField: View {
     @Binding var text: String
     let placeholder: String
     let systemImage: String
+    var keyboardType: UIKeyboardType = .default
     
     var body: some View {
         HStack(spacing: 12) {
@@ -136,6 +180,8 @@ struct CustomTextField: View {
                 .textFieldStyle(PlainTextFieldStyle())
                 .font(.system(size: 16))
                 .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .keyboardType(keyboardType)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -148,7 +194,6 @@ struct CustomTextField: View {
     }
 }
 
-// Custom SecureField with modern design
 struct CustomSecureField: View {
     @Binding var text: String
     let placeholder: String
@@ -163,6 +208,7 @@ struct CustomSecureField: View {
                 .textFieldStyle(PlainTextFieldStyle())
                 .font(.system(size: 16))
                 .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -175,7 +221,6 @@ struct CustomSecureField: View {
     }
 }
 
-// Custom Button View with modern design
 struct AuthButtonView: View {
     let title: String
     let color: Color
@@ -192,7 +237,7 @@ struct AuthButtonView: View {
     }
 }
 
-// Color extension for hex colors
+// MARK: - Color Extension
 extension Color {
     init(hex: String) {
         let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
@@ -219,6 +264,7 @@ extension Color {
     }
 }
 
+// MARK: - Preview
 struct AuthView_Previews: PreviewProvider {
     static var previews: some View {
         AuthView()

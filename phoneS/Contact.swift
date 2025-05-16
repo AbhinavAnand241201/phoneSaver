@@ -12,32 +12,39 @@ import CryptoKit
 struct Contact: Identifiable, Codable {
     let id: Int
     let name: String
-    private let encryptedPhone: String
-    var tags: [String]
-    var lastInteraction: Date?
-    var birthday: Date?
+    private(set) var encryptedPhone: String
+    let tags: String
+    let lastInteraction: Date?
+    let birthday: String
     var contactFrequency: String
     var preferredTime: String?
     var notes: String?
     var reminders: [Reminder]?
     
-    // Computed property to decrypt phone number
-    var phone: String {
+    // Private computed property for decrypted phone
+    private var decryptedPhone: String {
         do {
             return try decryptPhone(encryptedPhone)
         } catch {
             print("Error decrypting phone: \(error)")
-            return "Error: Could not decrypt phone number"
+            return ""
         }
+    }
+    
+    // Public computed property with validation
+    var phone: String {
+        let phone = decryptedPhone
+        return isValidPhoneNumber(phone) ? phone : "Invalid phone number"
     }
     
     // Coding keys for JSON encoding/decoding
     enum CodingKeys: String, CodingKey {
         case id
         case name
-        case encryptedPhone = "encrypted_phone"
+        case phone
+        case encryptedPhone
         case tags
-        case lastInteraction = "last_interaction"
+        case lastInteraction
         case birthday
         case contactFrequency = "contact_frequency"
         case preferredTime = "preferred_time"
@@ -46,9 +53,10 @@ struct Contact: Identifiable, Codable {
     }
     
     // Initialize with encrypted phone
-    init(id: Int, name: String, encryptedPhone: String, tags: [String] = [], lastInteraction: Date? = nil, birthday: Date? = nil, contactFrequency: String = "Weekly", preferredTime: String? = nil, notes: String? = nil, reminders: [Reminder]? = nil) {
+    init(id: Int, name: String, phone: String, encryptedPhone: String, tags: String, lastInteraction: Date?, birthday: String, contactFrequency: String = "Weekly", preferredTime: String? = nil, notes: String? = nil, reminders: [Reminder]? = nil) {
         self.id = id
         self.name = name
+        self.phone = phone
         self.encryptedPhone = encryptedPhone
         self.tags = tags
         self.lastInteraction = lastInteraction
@@ -60,17 +68,68 @@ struct Contact: Identifiable, Codable {
     }
     
     // Initialize with plain phone (will be encrypted)
-    init(id: Int, name: String, phone: String, tags: [String] = [], lastInteraction: Date? = nil, birthday: Date? = nil, contactFrequency: String = "Weekly", preferredTime: String? = nil, notes: String? = nil, reminders: [Reminder]? = nil) throws {
+    init(id: Int, name: String, phone: String, tags: String, lastInteraction: Date?, birthday: String) throws {
+        guard isValidPhoneNumber(phone) else {
+            throw ValidationError.invalidPhoneNumber
+        }
+        
+        guard isValidBirthday(birthday) else {
+            throw ValidationError.invalidBirthday
+        }
+        
         self.id = id
         self.name = name
         self.encryptedPhone = try encryptPhone(phone)
         self.tags = tags
         self.lastInteraction = lastInteraction
         self.birthday = birthday
-        self.contactFrequency = contactFrequency
-        self.preferredTime = preferredTime
-        self.notes = notes
-        self.reminders = reminders
+        self.contactFrequency = "Weekly"
+        self.preferredTime = nil
+        self.notes = nil
+        self.reminders = nil
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        id = try container.decode(Int.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        phone = try container.decode(String.self, forKey: .phone)
+        encryptedPhone = try container.decode(String.self, forKey: .encryptedPhone)
+        tags = try container.decode(String.self, forKey: .tags)
+        
+        if let lastInteractionString = try container.decodeIfPresent(String.self, forKey: .lastInteraction) {
+            let formatter = ISO8601DateFormatter()
+            if let date = formatter.date(from: lastInteractionString) {
+                lastInteraction = date
+            } else {
+                throw DecodingError.dataCorruptedError(forKey: .lastInteraction,
+                                                      in: container,
+                                                      debugDescription: "Date string does not match format")
+            }
+        } else {
+            lastInteraction = nil
+        }
+        
+        birthday = try container.decode(String.self, forKey: .birthday)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(phone, forKey: .phone)
+        try container.encode(encryptedPhone, forKey: .encryptedPhone)
+        try container.encode(tags, forKey: .tags)
+        
+        if let lastInteraction = lastInteraction {
+            let formatter = ISO8601DateFormatter()
+            let dateString = formatter.string(from: lastInteraction)
+            try container.encode(dateString, forKey: .lastInteraction)
+        }
+        
+        try container.encode(birthday, forKey: .birthday)
     }
 }
 
@@ -91,7 +150,8 @@ struct Reminder: Codable, Identifiable {
 
 // MARK: - Encryption/Decryption
 extension Contact {
-    static func encryptPhone(_ phone: String) throws -> String {
+    // Private encryption methods
+    private static func encryptPhone(_ phone: String) throws -> String {
         guard let key = KeychainManager.shared.getEncryptionKey() else {
             throw EncryptionError.keyNotFound
         }
@@ -104,7 +164,7 @@ extension Contact {
         return sealedBox.combined?.base64EncodedString() ?? ""
     }
     
-    static func decryptPhone(_ encryptedPhone: String) throws -> String {
+    private static func decryptPhone(_ encryptedPhone: String) throws -> String {
         guard let key = KeychainManager.shared.getEncryptionKey() else {
             throw EncryptionError.keyNotFound
         }
@@ -121,6 +181,23 @@ extension Contact {
         
         return decryptedString
     }
+    
+    // Public encryption methods with validation
+    func encrypt(_ phone: String) throws -> String {
+        guard isValidPhoneNumber(phone) else {
+            throw ValidationError.invalidPhoneNumber
+        }
+        return try Contact.encryptPhone(phone)
+    }
+    
+    func decrypt(_ encryptedPhone: String) throws -> String {
+        let decrypted = try Contact.decryptPhone(encryptedPhone)
+        guard isValidPhoneNumber(decrypted) else {
+            throw ValidationError.invalidPhoneNumber
+        }
+        return decrypted
+    }
+}
 }
 
 // MARK: - Encryption Errors
@@ -149,5 +226,89 @@ class KeychainManager {
         let key = SymmetricKey(size: .bits256)
         keychain.set(key.withUnsafeBytes { Data($0) }, forKey: encryptionKeyKey)
         return key
+    }
+}
+
+// MARK: - Validation
+extension Contact {
+    var isValid: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        isValidPhoneNumber(phone) &&
+        isValidBirthday(birthday)
+    }
+    
+    private func isValidPhoneNumber(_ number: String) -> Bool {
+        let digits = number.filter { $0.isNumber }
+        return digits.count >= 10
+    }
+    
+    private func isValidBirthday(_ birthday: String) -> Bool {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: birthday) != nil
+    }
+}
+
+// MARK: - Formatting
+extension Contact {
+    var formattedPhoneNumber: String {
+        let digits = phone.filter { $0.isNumber }
+        if digits.count <= 3 {
+            return digits
+        } else if digits.count <= 6 {
+            return "\(digits.prefix(3))-\(digits.dropFirst(3))"
+        } else {
+            return "\(digits.prefix(3))-\(digits.dropFirst(3).prefix(3))-\(digits.dropFirst(6))"
+        }
+    }
+    
+    var formattedBirthday: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        if let date = formatter.date(from: birthday) {
+            formatter.dateFormat = "MMMM d, yyyy"
+            return formatter.string(from: date)
+        }
+        return birthday
+    }
+    
+    var formattedLastInteraction: String? {
+        guard let lastInteraction = lastInteraction else { return nil }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: lastInteraction, relativeTo: Date())
+    }
+    
+    var tagArray: [String] {
+        tags.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+// MARK: - Encryption
+extension Contact {
+    func encryptPhone() throws -> String {
+        // TODO: Implement proper encryption
+        return phone
+    }
+    
+    func decryptPhone() throws -> String {
+        // TODO: Implement proper decryption
+        return phone
+    }
+}
+
+// MARK: - Equatable
+extension Contact: Equatable {
+    static func == (lhs: Contact, rhs: Contact) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+// MARK: - Hashable
+extension Contact: Hashable {
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
     }
 }

@@ -32,8 +32,8 @@ PhoneSaver is a modern contact management app built with SwiftUI for the fronten
 ## Project Structure
 
 ```
-phonesaver/
-├── phonesaver-frontend/       # SwiftUI frontend code
+phoneSaver/
+├── phoneS/                    # SwiftUI frontend code
 │   ├── PhoneSaver.xcodeproj   # Xcode project file
 │   ├── PhoneSaver/            # Main app code
 │   │   ├── Models/            # Data models (e.g., Contact.swift)
@@ -47,7 +47,8 @@ phonesaver/
 │   ├── go.sum                 # Dependency checksums
 │   └── serviceAccountKey.json # Firebase service account key (not included in repo)
 ├── README.md                  # This file
-└── LICENSE                    # License file (MIT License)
+├── LICENSE                    # License file (MIT License)
+└── .env.example              # Environment variables template
 ```
 
 ## Tech Stack
@@ -65,17 +66,54 @@ Before setting up the project, ensure you have the following installed:
 - Xcode 15.0 or later
 - iOS 16.0 or later (for simulator/device)
 - Firebase SDK (via Swift Package Manager)
+- CocoaPods (for additional dependencies)
 
 ### Backend:
 - Go 1.20 or later
 - MySQL 8.0 or later
 - Firebase Admin SDK (`go get firebase.google.com/go`)
+- OpenSSL (for encryption)
+
+### Security Requirements:
+- Strong password policy (minimum 12 characters, including uppercase, lowercase, numbers, and special characters)
+- Rate limiting configuration
+- SSL/TLS certificates
+- Environment variables for sensitive data
 
 ### General:
 - Git
 - A Firebase project (for cloud backups)
+- A MySQL database instance
+- A domain name for production deployment
 
 ## Setup Instructions
+
+### Security Configuration
+
+1. Create a `.env` file based on `.env.example`:
+```bash
+cp .env.example .env
+```
+
+2. Configure environment variables:
+```bash
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=your_db_user
+DB_PASSWORD=your_secure_password
+DB_NAME=phonesaver
+JWT_SECRET=your_secure_jwt_secret
+SERVER_PORT=8080
+FIREBASE_CONFIG=./firebase-credentials.json
+RATE_LIMIT=100
+RATE_LIMIT_PERIOD=100
+```
+
+3. Set up security headers:
+- Enable CORS only for trusted domains
+- Set up proper Content Security Policy
+- Enable HSTS
+- Configure security headers in Nginx/Apache
 
 ### Backend Setup
 
@@ -85,11 +123,9 @@ cd phonesaver-backend
 ```
 
 2. Install Dependencies:
-   Install the required Go packages:
 ```bash
 go mod tidy
 ```
-   This will install dependencies like gin-gonic/gin, go-sql-driver/mysql, and firebase.google.com/go.
 
 3. Set Up Firebase:
    - Create a Firebase project at [Firebase Console](https://console.firebase.google.com/).
@@ -97,12 +133,113 @@ go mod tidy
    - Download the `serviceAccountKey.json` file and place it in the `phonesaver-backend` directory.
    - Note: Do not commit this file to GitHub. It's already in .gitignore.
 
-4. Start the Backend Server:
-   Run the backend server:
+4. Configure Database:
 ```bash
+# Create database
+mysql -u root -p
+CREATE DATABASE phonesaver;
+USE phonesaver;
+
+# Create tables
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE contacts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    encrypted_phone VARCHAR(255) NOT NULL,
+    tags VARCHAR(255) DEFAULT '',
+    last_interaction DATETIME DEFAULT NULL,
+    birthday DATE DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE share_links (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    token VARCHAR(36) NOT NULL,
+    contact_id INT NOT NULL,
+    user_id INT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (contact_id) REFERENCES contacts(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+# Create indexes
+CREATE INDEX idx_user_id ON contacts(user_id);
+CREATE INDEX idx_tags ON contacts(tags);
+CREATE INDEX idx_last_interaction ON contacts(user_id, last_interaction);
+CREATE INDEX idx_share_links ON share_links(token);
+```
+
+5. Start the Backend Server:
+```bash
+# Run with environment variables
+export $(cat .env | xargs)
 go run main.go
 ```
-   The server will start on http://localhost:8080.
+
+### Frontend Setup
+
+1. Navigate to the Frontend Directory:
+```bash
+cd phoneS/phoneS
+```
+
+2. Open the Project in Xcode:
+```bash
+open PhoneSaver.xcodeproj
+```
+
+3. Install Firebase SDK:
+   - In Xcode, go to File > Add Packages.
+   - Add the Firebase SDK by entering the URL: https://github.com/firebase/firebase-ios-sdk.
+   - Select the FirebaseFirestore and FirebaseAuth packages.
+
+4. Configure Firebase:
+   - Download the `GoogleService-Info.plist` file from your Firebase project (Project Settings > General).
+   - Add it to the PhoneSaver target in Xcode.
+   - Initialize Firebase in your AppDelegate or App struct.
+
+5. Build and Run:
+   - Select an iOS simulator or device in Xcode.
+   - Press Cmd + R to build and run the app.
+
+### Security Best Practices
+
+1. Environment Variables:
+   - Never commit sensitive data to version control
+   - Use environment variables for configuration
+   - Rotate secrets regularly
+
+2. Input Validation:
+   - Validate all user inputs
+   - Use prepared statements for database queries
+   - Implement rate limiting
+   - Sanitize user input
+
+3. Error Handling:
+   - Never expose sensitive information in error messages
+   - Log errors securely
+   - Implement proper error boundaries
+
+4. Authentication:
+   - Use JWT for authentication
+   - Implement proper session management
+   - Use secure password hashing
+   - Implement password reset functionality
+
+5. Data Protection:
+   - Encrypt sensitive data
+   - Use secure key management
+   - Implement proper backup procedures
+   - Use secure communication channels
 
 ### Database Setup
 
@@ -221,20 +358,6 @@ open PhoneSaver.xcodeproj
 ## API Endpoints
 
 The backend provides the following API endpoints:
-
-| Method | Endpoint | Description | Request Body | Response |
-|--------|----------|-------------|--------------|----------|
-| POST | `/signup` | Register a new user | `{ "email": "user@example.com", "password": "pass123" }` | `{ "message": "User created successfully" }` |
-| POST | `/login` | Log in a user | `{ "email": "user@example.com", "password": "pass123" }` | `{ "token": "jwt_token" }` |
-| POST | `/contacts` | Add a new contact | `{ "name": "John", "encrypted_phone": "encrypted_data", "tags": "Work", "last_interaction": "2025-05-11T10:00:00Z", "birthday": "1990-01-01" }` | `{ "message": "Contact added successfully" }` |
-| GET | `/contacts` | Fetch all contacts for the user | None | Array of contacts |
-| POST | `/contacts/:id/tags` | Update tags for a contact | `{ "tags": ["Work", "Friend"] }` | `{ "message": "Tags updated successfully" }` |
-| POST | `/contacts/:id/last-interaction` | Update last interaction for a contact | `{ "last_interaction": "2025-05-11T10:00:00Z" }` | `{ "message": "Last interaction updated successfully" }` |
-| POST | `/contacts/:id/birthday` | Update birthday for a contact | `{ "birthday": "1990-01-01" }` | `{ "message": "Birthday updated successfully" }` |
-| POST | `/backup` | Back up contacts to Firebase | Array of contacts | `{ "message": "Backup successful" }` |
-
-### Authentication
-
 - All endpoints except `/signup` and `/login` require a JWT token.
 - Pass the token in the Authorization header: `Bearer <token>`.
 

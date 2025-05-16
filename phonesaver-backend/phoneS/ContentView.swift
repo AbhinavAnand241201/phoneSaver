@@ -6,11 +6,11 @@ struct ContentView: View {
     
     var body: some View {
         Group {
-        if authViewModel.isAuthenticated {
-            ContactsTabView()
+            if authViewModel.isAuthenticated {
+                ContactsTabView()
                     .transition(.opacity)
-        } else {
-            AuthView()
+            } else {
+                AuthView()
                     .transition(.opacity)
             }
         }

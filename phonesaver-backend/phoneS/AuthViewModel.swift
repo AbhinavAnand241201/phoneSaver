@@ -1,7 +1,6 @@
 import Foundation
 import UserNotifications
 import FirebaseFirestore
-import SwiftUI
 
 class AuthViewModel: ObservableObject {
     @Published var email: String = ""
@@ -11,85 +10,14 @@ class AuthViewModel: ObservableObject {
     @Published var token: String?
     @Published var isLoading: Bool = false
     @Published var contacts: [Contact] = []
-    @Published var user: User?
-    @Published var errorViewModel = ErrorViewModel()
     
     private let db = Firestore.firestore()
-    private let keychain = KeychainWrapper.standard
-    private let sessionTimeout: TimeInterval = 24 * 60 * 60 // 24 hours
-    
-    enum AuthError: LocalizedError {
-        case invalidCredentials
-        case networkError
-        case serverError
-        case unauthorized
-        case invalidResponse
-        case notAuthenticated
-        
-        var errorDescription: String? {
-            switch self {
-            case .invalidCredentials:
-                return "Invalid email or password"
-            case .networkError:
-                return "Network connection error"
-            case .serverError:
-                return "Server error occurred"
-            case .unauthorized:
-                return "Unauthorized access"
-            case .invalidResponse:
-                return "Invalid server response"
-            case .notAuthenticated:
-                return "Not authenticated"
-            }
-        }
-    }
-    
-    init() {
-        checkSession()
-    }
-    
-    // MARK: - Session Management
-    private func checkSession() {
-        guard let token = keychain.string(forKey: "authToken"),
-              let tokenData = keychain.data(forKey: "tokenData") else {
-            isAuthenticated = false
-            return
-        }
-        
-        do {
-            let tokenInfo = try JSONDecoder().decode(TokenInfo.self, from: tokenData)
-            if Date().timeIntervalSince(tokenInfo.createdAt) > sessionTimeout {
-                logout()
-                return
-            }
-            
-            isAuthenticated = true
-            fetchUserProfile()
-        } catch {
-            logout()
-        }
-    }
-    
-    private func saveSession(token: String, tokenInfo: TokenInfo) {
-        keychain.set(token, forKey: "authToken")
-        if let tokenData = try? JSONEncoder().encode(tokenInfo) {
-            keychain.set(tokenData, forKey: "tokenData")
-        }
-    }
     
     // MARK: - Authentication Methods
     func signup() {
         DispatchQueue.main.async {
             self.isLoading = true
             self.errorMessage = nil
-        }
-        
-        guard !email.isEmpty, !password.isEmpty else {
-            DispatchQueue.main.async {
-                self.errorViewModel.handleError(AuthError.invalidCredentials)
-                self.isLoading = false
-            }
-            return
         }
         
         let url = URL(string: "http://localhost:8080/signup")!
@@ -107,35 +35,27 @@ class AuthViewModel: ObservableObject {
                 self.isLoading = false
                 
                 if let error = error {
-                    self.errorViewModel.handleError(AuthError.networkError)
+                    self.errorMessage = error.localizedDescription
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    self.errorViewModel.handleError(AuthError.invalidResponse)
+                    self.errorMessage = "Invalid server response"
                     return
                 }
                 
-                switch httpResponse.statusCode {
-                case 200:
-                    if let data = data,
-                       let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                       let token = json["token"] as? String {
-                        self.saveSession(token: token)
-                        self.isAuthenticated = true
-                        self.email = ""
-                        self.password = ""
-                    } else {
-                        self.errorViewModel.handleError(AuthError.invalidResponse)
-                    }
-                case 400:
+                if httpResponse.statusCode == 200 {
+                    self.errorMessage = "User created successfully"
+                    self.email = ""
+                    self.password = ""
+                } else {
                     if let data = data,
                        let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
                        let errorMessage = json["error"] as? String {
-                        self.errorViewModel.handleError(AuthError.invalidCredentials)
+                        self.errorMessage = "Signup failed: \(errorMessage)"
+                    } else {
+                        self.errorMessage = "Signup failed: Server error"
                     }
-                default:
-                    self.errorViewModel.handleError(AuthError.serverError)
                 }
             }
         }.resume()
@@ -208,13 +128,13 @@ class AuthViewModel: ObservableObject {
         
         do {
             let encryptedPhone = try Contact.encryptPhone(phone)
-        
-        let url = URL(string: "http://localhost:8080/contacts")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
+            
+            let url = URL(string: "http://localhost:8080/contacts")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            
             let body: [String: Any] = [
                 "name": name,
                 "encrypted_phone": encryptedPhone,
@@ -800,67 +720,4 @@ class AuthViewModel: ObservableObject {
             }
         }
     }
-    
-    // MARK: - User Profile
-    func fetchUserProfile() {
-        guard isAuthenticated else { return }
-        
-        // TODO: Implement API call to fetch user profile
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            // Simulate successful profile fetch
-            self.user = User(id: 1, name: "John Doe", email: "john@example.com")
-        }
-    }
-    
-    func updateProfile(name: String, email: String) {
-        guard isAuthenticated else { return }
-        
-        isLoading = true
-        errorMessage = nil
-        
-        // Validate input
-        guard !name.isEmpty, !email.isEmpty else {
-            errorMessage = "Please fill in all fields"
-            isLoading = false
-            return
-        }
-        
-        guard isValidEmail(email) else {
-            errorMessage = "Please enter a valid email address"
-            isLoading = false
-            return
-        }
-        
-        // TODO: Implement API call to update profile
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            // Simulate successful profile update
-            self.user = User(id: self.user?.id ?? 1, name: name, email: email)
-            self.isLoading = false
-        }
-    }
-    
-    // MARK: - Validation
-    private func isValidEmail(_ email: String) -> Bool {
-        let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
-        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailRegex)
-        return emailPredicate.evaluate(with: email)
-    }
-    
-    private func isValidPassword(_ password: String) -> Bool {
-        let passwordRegex = "^(?=.*[A-Z])(?=.*[0-9])(?=.*[a-z]).{8,}$"
-        let passwordPredicate = NSPredicate(format: "SELF MATCHES %@", passwordRegex)
-        return passwordPredicate.evaluate(with: password)
-    }
-}
-
-// MARK: - Models
-struct User: Codable {
-    let id: Int
-    let name: String
-    let email: String
-}
-
-struct TokenInfo: Codable {
-    let token: String
-    let createdAt: Date
 }

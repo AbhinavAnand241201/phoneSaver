@@ -3,11 +3,9 @@ import SwiftUI
 struct ContactDetailView: View {
     let contact: Contact
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var viewModel = ContactDetailViewModel()
     @State private var showEditSheet = false
     @State private var showDeleteAlert = false
     @State private var animateContent = false
-    @State private var showShareSheet = false
     
     var body: some View {
         NavigationView {
@@ -18,30 +16,34 @@ struct ContactDetailView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         // Contact Avatar
-                        ContactAvatar(name: contact.name, size: 120)
-                            .padding(.top, 20)
-                            .scaleEffect(animateContent ? 1 : 0.8)
-                            .opacity(animateContent ? 1 : 0)
+                        ZStack {
+                            Circle()
+                                .fill(Color(hex: "4361EE").opacity(0.1))
+                                .frame(width: 120, height: 120)
+                            
+                            Text(String(contact.name.prefix(1)))
+                                .font(.system(size: 48, weight: .semibold))
+                                .foregroundColor(Color(hex: "4361EE"))
+                        }
+                        .padding(.top, 20)
+                        .scaleEffect(animateContent ? 1 : 0.8)
+                        .opacity(animateContent ? 1 : 0)
                         
                         // Contact Info
                         VStack(spacing: 20) {
-                            InfoCard(title: "Phone",
-                                   value: formatPhoneNumber(contact.phone),
-                                   icon: "phone.fill")
+                            InfoCard(title: "Phone", value: contact.phone, icon: "phone.fill")
                                 .offset(y: animateContent ? 0 : 50)
                                 .opacity(animateContent ? 1 : 0)
                             
                             if !contact.tags.isEmpty {
-                                InfoCard(title: "Tags",
-                                       value: contact.tags,
-                                       icon: "tag.fill")
+                                InfoCard(title: "Tags", value: contact.tags, icon: "tag.fill")
                                     .offset(y: animateContent ? 0 : 50)
                                     .opacity(animateContent ? 1 : 0)
                             }
                             
                             if let lastInteraction = contact.lastInteraction {
                                 InfoCard(title: "Last Interaction",
-                                       value: formatDate(lastInteraction),
+                                       value: lastInteraction.formatted(.relative),
                                        icon: "clock.fill")
                                     .offset(y: animateContent ? 0 : 50)
                                     .opacity(animateContent ? 1 : 0)
@@ -49,7 +51,7 @@ struct ContactDetailView: View {
                             
                             if !contact.birthday.isEmpty {
                                 InfoCard(title: "Birthday",
-                                       value: formatBirthday(contact.birthday),
+                                       value: contact.birthday,
                                        icon: "gift.fill")
                                     .offset(y: animateContent ? 0 : 50)
                                     .opacity(animateContent ? 1 : 0)
@@ -57,39 +59,24 @@ struct ContactDetailView: View {
                         }
                         .padding(.horizontal)
                         
-                        // Error Message
-                        if let errorMessage = viewModel.errorMessage {
-                            Text(errorMessage)
-                                .foregroundColor(Color(hex: "DC3545"))
-                                .font(.system(size: 14, weight: .medium))
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 16)
-                                .background(Color(hex: "DC3545").opacity(0.1))
-                                .cornerRadius(8)
-                                .transition(.scale.combined(with: .opacity))
-                        }
-                        
                         // Action Buttons
                         VStack(spacing: 12) {
                             ActionButton(title: "Call",
                                       icon: "phone.fill",
-                                      color: Color(hex: "4361EE"),
-                                      isLoading: viewModel.isCalling) {
-                                viewModel.callContact(contact)
+                                      color: Color(hex: "4361EE")) {
+                                // TODO: Implement call action
                             }
                             
                             ActionButton(title: "Message",
                                       icon: "message.fill",
-                                      color: Color(hex: "4CC9F0"),
-                                      isLoading: viewModel.isMessaging) {
-                                viewModel.messageContact(contact)
+                                      color: Color(hex: "4CC9F0")) {
+                                // TODO: Implement message action
                             }
                             
                             ActionButton(title: "Share Contact",
                                       icon: "square.and.arrow.up.fill",
-                                      color: Color(hex: "7209B7"),
-                                      isLoading: viewModel.isSharing) {
-                                showShareSheet = true
+                                      color: Color(hex: "7209B7")) {
+                                // TODO: Implement share action
                             }
                         }
                         .padding(.horizontal)
@@ -128,13 +115,11 @@ struct ContactDetailView: View {
             .alert("Delete Contact", isPresented: $showDeleteAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
-                    viewModel.deleteContact(contact)
+                    // TODO: Implement delete action
+                    dismiss()
                 }
             } message: {
                 Text("Are you sure you want to delete this contact? This action cannot be undone.")
-            }
-            .sheet(isPresented: $showShareSheet) {
-                ShareSheet(items: [contact.name, contact.phone])
             }
             .onAppear {
                 withAnimation(.easeOut(duration: 0.6)) {
@@ -143,36 +128,8 @@ struct ContactDetailView: View {
             }
         }
     }
-    
-    private func formatPhoneNumber(_ number: String) -> String {
-        let digits = number.filter { $0.isNumber }
-        if digits.count <= 3 {
-            return digits
-        } else if digits.count <= 6 {
-            return "\(digits.prefix(3))-\(digits.dropFirst(3))"
-        } else {
-            return "\(digits.prefix(3))-\(digits.dropFirst(3).prefix(3))-\(digits.dropFirst(6))"
-        }
-    }
-    
-    private func formatDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-    
-    private func formatBirthday(_ birthday: String) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        if let date = formatter.date(from: birthday) {
-            formatter.dateFormat = "MMMM d, yyyy"
-            return formatter.string(from: date)
-        }
-        return birthday
-    }
 }
 
-// MARK: - Supporting Views
 struct InfoCard: View {
     let title: String
     let value: String
@@ -210,19 +167,13 @@ struct ActionButton: View {
     let title: String
     let icon: String
     let color: Color
-    let isLoading: Bool
     let action: () -> Void
     
     var body: some View {
         Button(action: action) {
             HStack {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                } else {
-                    Image(systemName: icon)
-                        .font(.system(size: 20, weight: .semibold))
-                }
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .semibold))
                 Text(title)
                     .font(.system(size: 16, weight: .semibold))
             }
@@ -233,7 +184,6 @@ struct ActionButton: View {
             .cornerRadius(12)
             .shadow(color: color.opacity(0.3), radius: 8, x: 0, y: 4)
         }
-        .disabled(isLoading)
     }
 }
 
@@ -264,8 +214,22 @@ struct EditContactView: View {
                 ScrollView {
                     VStack(spacing: 20) {
                         // Contact Avatar
-                        ContactAvatar(name: name, size: 100)
-                            .padding(.top, 20)
+                        ZStack {
+                            Circle()
+                                .fill(Color(hex: "4361EE").opacity(0.1))
+                                .frame(width: 100, height: 100)
+                            
+                            if name.isEmpty {
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(Color(hex: "4361EE"))
+                            } else {
+                                Text(String(name.prefix(1)))
+                                    .font(.system(size: 40, weight: .semibold))
+                                    .foregroundColor(Color(hex: "4361EE"))
+                            }
+                        }
+                        .padding(.top, 20)
                         
                         // Input Fields
                         VStack(spacing: 16) {
@@ -289,9 +253,25 @@ struct EditContactView: View {
                                 .opacity(animateFields ? 1 : 0)
                             
                             // Birthday Picker
-                            BirthdayPickerButton(date: birthday, showDatePicker: $showDatePicker)
-                                .offset(y: animateFields ? 0 : 50)
-                                .opacity(animateFields ? 1 : 0)
+                            Button(action: { showDatePicker.toggle() }) {
+                                HStack {
+                                    Image(systemName: "calendar")
+                                        .foregroundColor(Color(hex: "6C757D"))
+                                    Text(birthday.formatted(date: .long, time: .omitted))
+                                        .foregroundColor(Color(hex: "212529"))
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                                .background(Color.white)
+                                .cornerRadius(12)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color(hex: "DEE2E6"), lineWidth: 1)
+                                )
+                            }
+                            .offset(y: animateFields ? 0 : 50)
+                            .opacity(animateFields ? 1 : 0)
                         }
                         .padding(.horizontal)
                         
@@ -308,12 +288,20 @@ struct EditContactView: View {
                         }
                         
                         // Save Button
-                        SaveButton(title: "Save Changes",
-                                 isDisabled: name.isEmpty || phone.isEmpty) {
-                            saveContact()
+                        Button(action: saveContact) {
+                            Text("Save Changes")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(Color(hex: "4361EE"))
+                                .cornerRadius(12)
+                                .shadow(color: Color(hex: "4361EE").opacity(0.3), radius: 8, x: 0, y: 4)
                         }
                         .padding(.horizontal)
                         .padding(.top, 20)
+                        .disabled(name.isEmpty || phone.isEmpty)
+                        .opacity(name.isEmpty || phone.isEmpty ? 0.6 : 1)
                     }
                 }
             }
@@ -341,56 +329,6 @@ struct EditContactView: View {
     }
 }
 
-struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
-    
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
-    }
-    
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-// MARK: - ViewModel
-class ContactDetailViewModel: ObservableObject {
-    @Published var isLoading = false
-    @Published var errorMessage: String?
-    @Published var isCalling = false
-    @Published var isMessaging = false
-    @Published var isSharing = false
-    
-    func callContact(_ contact: Contact) {
-        isCalling = true
-        errorMessage = nil
-        
-        // TODO: Implement call functionality
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            self.isCalling = false
-        }
-    }
-    
-    func messageContact(_ contact: Contact) {
-        isMessaging = true
-        errorMessage = nil
-        
-        // TODO: Implement messaging functionality
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            self.isMessaging = false
-        }
-    }
-    
-    func deleteContact(_ contact: Contact) {
-        isLoading = true
-        errorMessage = nil
-        
-        // TODO: Implement delete functionality
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            self.isLoading = false
-        }
-    }
-}
-
-// MARK: - Preview
 struct ContactDetailView_Previews: PreviewProvider {
     static var previews: some View {
         ContactDetailView(contact: Contact(
