@@ -387,57 +387,80 @@ func main() {
 	// Create and configure router
 	r := gin.Default()
 
-	// Security Headers Middleware
-	r.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("X-Frame-Options", "DENY")
-		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
-		c.Writer.Header().Set("X-XSS-Protection", "1; mode=block")
-		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		c.Writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-		c.Next()
-	})
-
-	// CORS configuration
-	corsConfig := cors.Config{
+	// CORS middleware
+	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
-	}
+	}))
 
-	// Rate limiting configuration
-	rateLimiter := NewRateLimiter(rate.Limit(100), 100) // 100 requests per second
+	// Logger middleware
+	r.Use(func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		duration := time.Since(start)
+		logger.Infof("%s %s %s %v", c.Request.Method, c.Request.URL.Path, c.Writer.Status(), duration)
+	})
 
-	// API Routes
-	r.Use(LoggerMiddleware())
-	r.Use(cors.New(corsConfig))
-	r.Use(rateLimiter.RateLimit())
-	r.POST("/signup", signup)
-	r.POST("/login", login)
+	// Rate limiting middleware
+	limiter := rate.NewLimiter(rate.Every(1*time.Second), 100)
+	r.Use(func(c *gin.Context) {
+		if !limiter.Allow() {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error": "Too many requests. Please try again later.",
+			})
+			return
+		}
+		c.Next()
+	})
 
-	// Protected routes
-	auth := r.Group("/")
-	auth.Use(authMiddleware)
+	// Security middleware
+	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Add("X-Content-Type-Options", "nosniff")
+		c.Writer.Header().Add("X-Frame-Options", "DENY")
+		c.Writer.Header().Add("X-XSS-Protection", "1; mode=block")
+		c.Writer.Header().Add("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Next()
+	})
+
+	// Recovery middleware
+	r.Use(gin.Recovery())
+
+	// Initialize API routes
+	api := r.Group("/api")
 	{
-		auth.POST("/contacts", addContact)
-		auth.GET("/contacts", getContacts)
-		auth.PUT("/contacts/:id/tags", updateContactTags)
-		auth.PUT("/contacts/:id/last-interaction", updateLastInteraction)
-		auth.PUT("/contacts/:id/birthday", updateBirthday)
-		auth.POST("/backup", backupContacts)
-			protected.POST("/contacts/:id/last-interaction", updateLastInteraction)
-			protected.POST("/contacts/:id/birthday", updateBirthday)
+		// Public routes
+		api.POST("/auth/signup", signup)
+		api.POST("/auth/login", login)
+		api.POST("/contacts/bulk", bulkCreateContacts)
+
+		// Protected routes
+		protected := api.Group("", authMiddleware(jwt))
+		{
+			protected.GET("/contacts", getContacts)
+			protected.GET("/contacts/:id", getContact)
+			protected.POST("/contacts", createContact)
+			protected.PUT("/contacts/:id", updateContact)
+			protected.DELETE("/contacts/:id", deleteContact)
+			protected.PUT("/contacts/:id/tags", updateContactTags)
+			protected.PUT("/contacts/:id/last-interaction", updateLastInteraction)
+			protected.PUT("/contacts/:id/birthday", updateBirthday)
+			protected.GET("/insights", getInsights)
 			protected.POST("/backup", backupContacts)
+			protected.GET("/backup", restoreContacts)
 		}
 	}
 
 	// Start server
-	logger.Printf("Server starting on port %s", config.ServerPort)
-	if err := r.Run(":" + config.ServerPort); err != nil {
-		logger.Fatal("Failed to start server:", err)
+	port := fmt.Sprintf(":%d", config.Server.Port)
+	logger.Infof("Server starting on port %s", port)
+	if err := r.Run(port); err != nil {
+		logger.Fatal(err)
 	}
+	return
 }
 
 func signup(c *gin.Context) {
