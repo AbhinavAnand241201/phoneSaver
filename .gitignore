@@ -50,4 +50,4 @@ serviceAccountKey.json
 *.swo
 
 # Logs
-*.log 
+*.log .DS_Store
