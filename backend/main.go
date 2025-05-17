@@ -65,10 +65,12 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+// User struct with PasswordHash for login
 type User struct {
-	ID       int    `json:"id"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	ID           int    `json:"id"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+	PasswordHash string `json:"password_hash"`
 }
 
 type Contact struct {
@@ -116,10 +118,15 @@ func NewRateLimiter(r rate.Limit, b int) *RateLimiter {
 	}
 }
 
+// Allow checks if the request is allowed
+func (rl *RateLimiter) Allow() bool {
+	return rl.limiter.Allow()
+}
+
 // RateLimit middleware limits the number of requests
 func (rl *RateLimiter) RateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !rl.limiter.Allow() {
+		if !rl.Allow() {
 			c.JSON(http.StatusTooManyRequests, Response{
 				Success: false,
 				Error:   "Rate limit exceeded",
@@ -141,6 +148,11 @@ func NewLogger() *Logger {
 	return &Logger{
 		Logger: log.New(os.Stdout, "[PhoneSaver] ", log.LstdFlags|log.Lshortfile),
 	}
+}
+
+// Infof logs an info message
+func (l *Logger) Infof(format string, v ...interface{}) {
+	l.Printf(format, v...)
 }
 
 var logger = NewLogger()
@@ -395,24 +407,11 @@ func main() {
 	}))
 
 	// Logger middleware
-	r.Use(func(c *gin.Context) {
-		start := time.Now()
-		c.Next()
-		duration := time.Since(start)
-		logger.Infof("%s %s %s %v", c.Request.Method, c.Request.URL.Path, c.Writer.Status(), duration)
-	})
+	r.Use(LoggerMiddleware())
 
 	// Rate limiting middleware
-	limiter := rate.NewLimiter(rate.Every(1*time.Second), 100)
-	r.Use(func(c *gin.Context) {
-		if !limiter.Allow() {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too many requests. Please try again later.",
-			})
-			return
-		}
-		c.Next()
-	})
+	limiter := NewRateLimiter(rate.Every(1*time.Second), 100)
+	r.Use(limiter.RateLimit())
 
 	// Security middleware
 	r.Use(func(c *gin.Context) {
@@ -435,7 +434,7 @@ func main() {
 		api.POST("/contacts/bulk", bulkCreateContacts)
 
 		// Protected routes
-		protected := api.Group("", authMiddleware(jwt))
+		protected := api.Group("", authMiddleware())
 		{
 			protected.GET("/contacts", getContacts)
 			protected.GET("/contacts/:id", getContact)
@@ -452,12 +451,11 @@ func main() {
 	}
 
 	// Start server
-	port := fmt.Sprintf(":%d", config.Server.Port)
+	port := fmt.Sprintf(":%s", config.ServerPort)
 	logger.Infof("Server starting on port %s", port)
 	if err := r.Run(port); err != nil {
 		logger.Fatal(err)
 	}
-	return
 }
 
 func signup(c *gin.Context) {
@@ -595,87 +593,83 @@ func signup(c *gin.Context) {
 	})
 }
 
+// login handles user login
 func login(c *gin.Context) {
+	var loginReq struct {
+		Email    string `json:"email" binding:"required,email"`
+		Password string `json:"password" binding:"required,min=6"`
+	}
+
+	if err := c.ShouldBindJSON(&loginReq); err != nil {
+		c.JSON(http.StatusBadRequest, Response{
+			Success: false,
+			Error:   "Invalid request format",
+		})
+		return
+	}
+
+	// Get user from database
 	var user User
-	if err := c.ShouldBindJSON(&user); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "Invalid request body",
+	err := db.QueryRow("SELECT id, email, password_hash FROM users WHERE email = ?", loginReq.Email).Scan(
+		&user.ID, &user.Email, &user.PasswordHash,
+	)
+
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusUnauthorized, Response{
+			Success: false,
+			Error:   "Invalid credentials",
 		})
 		return
 	}
 
-	// Validate required fields
-	if user.Email == "" || user.Password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "Email and password are required",
+	if err != nil {
+		logger.Printf("Failed to get user: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to login",
 		})
 		return
 	}
 
-	// Check if user exists
-	var storedUser User
-	if err := db.Get(&storedUser, "SELECT * FROM users WHERE email = ?", user.Email); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"error":   "Invalid credentials",
-		})
-		return
-	}
-
-	// Compare passwords
-	if err := bcrypt.CompareHashAndPassword([]byte(storedUser.Password), []byte(user.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"error":   "Invalid credentials",
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(loginReq.Password)); err != nil {
+		c.JSON(http.StatusUnauthorized, Response{
+			Success: false,
+			Error:   "Invalid credentials",
 		})
 		return
 	}
 
 	// Generate JWT token
+	expirationTime := time.Now().Add(24 * time.Hour)
 	claims := &Claims{
-		UserID: storedUser.ID,
+		UserID: user.ID,
 		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: time.Now().Add(time.Hour * 24).Unix(),
+			ExpiresAt: expirationTime.Unix(),
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   "Failed to generate token",
+		logger.Printf("Failed to generate token: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to login",
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"token":   tokenString,
-		"message": "Logged in successfully",
+	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data: map[string]interface{}{
+			"token": tokenString,
+			"user": map[string]interface{}{
+				"id":    user.ID,
+				"email": user.Email,
+			},
+		},
 	})
-	tokenString := c.GetHeader("Authorization")
-	if tokenString == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-		c.Abort()
-		return
-	}
-
-	claims := &Claims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
-	})
-
-	if err != nil || !token.Valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		c.Abort()
-		return
-	}
-
-	c.Set("user_id", claims.UserID)
-	c.Next()
 }
 
 func addContact(c *gin.Context) {
@@ -1069,5 +1063,383 @@ func backupContacts(c *gin.Context) {
 			"contacts_count": len(backupReq.Contacts),
 			"timestamp":      time.Now(),
 		},
+	})
+}
+
+// getContact retrieves a single contact
+func getContact(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	contactID := c.Param("id")
+
+	var contact Contact
+	err := db.QueryRow("SELECT * FROM contacts WHERE id = ? AND user_id = ?", contactID, userID).Scan(
+		&contact.ID, &contact.UserID, &contact.Name, &contact.Phone, &contact.EncryptedPhone,
+		&contact.Tags, &contact.LastInteraction, &contact.Birthday,
+	)
+
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, Response{
+			Success: false,
+			Error:   "Contact not found",
+		})
+		return
+	}
+
+	if err != nil {
+		logger.Printf("Failed to get contact: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to get contact",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data:    contact,
+	})
+}
+
+// authMiddleware validates the JWT token
+func authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenString := c.GetHeader("Authorization")
+		if tokenString == "" {
+			c.JSON(http.StatusUnauthorized, Response{
+				Success: false,
+				Error:   "Authorization header required",
+			})
+			c.Abort()
+			return
+		}
+
+		// Remove "Bearer " prefix if present
+		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
+
+		claims := &Claims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, Response{
+				Success: false,
+				Error:   "Invalid token",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Set("user_id", claims.UserID)
+		c.Next()
+	}
+}
+
+// createContact creates a new contact
+func createContact(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	var contact Contact
+	if err := c.ShouldBindJSON(&contact); err != nil {
+		c.JSON(http.StatusBadRequest, Response{
+			Success: false,
+			Error:   "Invalid request format",
+		})
+		return
+	}
+
+	contact.UserID = userID.(int)
+	result, err := db.Exec(
+		"INSERT INTO contacts (user_id, name, phone, encrypted_phone, tags, last_interaction, birthday) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		contact.UserID, contact.Name, contact.Phone, contact.EncryptedPhone, contact.Tags, contact.LastInteraction, contact.Birthday,
+	)
+
+	if err != nil {
+		logger.Printf("Failed to create contact: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to create contact",
+		})
+		return
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		logger.Printf("Failed to get last insert ID: %v", err)
+	}
+
+	contact.ID = int(id)
+	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data:    contact,
+	})
+}
+
+// updateContact updates an existing contact
+func updateContact(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	contactID := c.Param("id")
+	var contact Contact
+	if err := c.ShouldBindJSON(&contact); err != nil {
+		c.JSON(http.StatusBadRequest, Response{
+			Success: false,
+			Error:   "Invalid request format",
+		})
+		return
+	}
+
+	result, err := db.Exec(
+		"UPDATE contacts SET name = ?, phone = ?, encrypted_phone = ?, tags = ?, last_interaction = ?, birthday = ? WHERE id = ? AND user_id = ?",
+		contact.Name, contact.Phone, contact.EncryptedPhone, contact.Tags, contact.LastInteraction, contact.Birthday, contactID, userID,
+	)
+
+	if err != nil {
+		logger.Printf("Failed to update contact: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to update contact",
+		})
+		return
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		logger.Printf("Failed to get rows affected: %v", err)
+	}
+
+	if rows == 0 {
+		c.JSON(http.StatusNotFound, Response{
+			Success: false,
+			Error:   "Contact not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data:    "Contact updated successfully",
+	})
+}
+
+// deleteContact deletes a contact
+func deleteContact(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	contactID := c.Param("id")
+
+	result, err := db.Exec("DELETE FROM contacts WHERE id = ? AND user_id = ?", contactID, userID)
+	if err != nil {
+		logger.Printf("Failed to delete contact: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to delete contact",
+		})
+		return
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		logger.Printf("Failed to get rows affected: %v", err)
+	}
+
+	if rows == 0 {
+		c.JSON(http.StatusNotFound, Response{
+			Success: false,
+			Error:   "Contact not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data:    "Contact deleted successfully",
+	})
+}
+
+// getInsights returns contact insights
+func getInsights(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	// Get total contacts
+	var totalContacts int
+	err := db.QueryRow("SELECT COUNT(*) FROM contacts WHERE user_id = ?", userID).Scan(&totalContacts)
+	if err != nil {
+		logger.Printf("Failed to get total contacts: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to get insights",
+		})
+		return
+	}
+
+	// Get contacts by tag
+	rows, err := db.Query("SELECT tags, COUNT(*) as count FROM contacts WHERE user_id = ? GROUP BY tags", userID)
+	if err != nil {
+		logger.Printf("Failed to get contacts by tag: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to get insights",
+		})
+		return
+	}
+	defer rows.Close()
+
+	tagStats := make(map[string]int)
+	for rows.Next() {
+		var tags string
+		var count int
+		if err := rows.Scan(&tags, &count); err != nil {
+			logger.Printf("Failed to scan tag stats: %v", err)
+			continue
+		}
+		tagStats[tags] = count
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data: map[string]interface{}{
+			"total_contacts": totalContacts,
+			"tag_stats":      tagStats,
+		},
+	})
+}
+
+// restoreContacts restores contacts from backup
+func restoreContacts(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	ctx := context.Background()
+
+	// Get contacts from Firestore
+	userRef := firestoreClient.Collection("users").Doc(fmt.Sprintf("%d", userID))
+	contactsRef := userRef.Collection("contacts")
+	docs, err := contactsRef.Documents(ctx).GetAll()
+	if err != nil {
+		logger.Printf("Failed to fetch contacts from Firestore: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to restore contacts",
+		})
+		return
+	}
+
+	// Start transaction
+	tx, err := db.Begin()
+	if err != nil {
+		logger.Printf("Failed to start transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to restore contacts",
+		})
+		return
+	}
+
+	// Delete existing contacts
+	_, err = tx.Exec("DELETE FROM contacts WHERE user_id = ?", userID)
+	if err != nil {
+		tx.Rollback()
+		logger.Printf("Failed to delete existing contacts: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to restore contacts",
+		})
+		return
+	}
+
+	// Insert restored contacts
+	for _, doc := range docs {
+		var contact Contact
+		if err := doc.DataTo(&contact); err != nil {
+			tx.Rollback()
+			logger.Printf("Failed to convert contact data: %v", err)
+			c.JSON(http.StatusInternalServerError, Response{
+				Success: false,
+				Error:   "Failed to restore contacts",
+			})
+			return
+		}
+
+		contact.UserID = userID.(int)
+		_, err = tx.Exec(
+			"INSERT INTO contacts (user_id, name, phone, encrypted_phone, tags, last_interaction, birthday) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			contact.UserID, contact.Name, contact.Phone, contact.EncryptedPhone, contact.Tags, contact.LastInteraction, contact.Birthday,
+		)
+		if err != nil {
+			tx.Rollback()
+			logger.Printf("Failed to insert restored contact: %v", err)
+			c.JSON(http.StatusInternalServerError, Response{
+				Success: false,
+				Error:   "Failed to restore contacts",
+			})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		logger.Printf("Failed to commit transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to restore contacts",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data:    "Contacts restored successfully",
+	})
+}
+
+// bulkCreateContacts creates multiple contacts at once
+func bulkCreateContacts(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	var contacts []Contact
+	if err := c.ShouldBindJSON(&contacts); err != nil {
+		c.JSON(http.StatusBadRequest, Response{
+			Success: false,
+			Error:   "Invalid request format",
+		})
+		return
+	}
+
+	// Start transaction
+	tx, err := db.Begin()
+	if err != nil {
+		logger.Printf("Failed to start transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to create contacts",
+		})
+		return
+	}
+
+	for _, contact := range contacts {
+		contact.UserID = userID.(int)
+		_, err = tx.Exec(
+			"INSERT INTO contacts (user_id, name, phone, encrypted_phone, tags, last_interaction, birthday) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			contact.UserID, contact.Name, contact.Phone, contact.EncryptedPhone, contact.Tags, contact.LastInteraction, contact.Birthday,
+		)
+		if err != nil {
+			tx.Rollback()
+			logger.Printf("Failed to create contact: %v", err)
+			c.JSON(http.StatusInternalServerError, Response{
+				Success: false,
+				Error:   "Failed to create contacts",
+			})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		logger.Printf("Failed to commit transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to create contacts",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data:    "Contacts created successfully",
 	})
 }
