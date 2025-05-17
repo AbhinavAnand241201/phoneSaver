@@ -33,16 +33,15 @@ PhoneSaver is a modern contact management app built with SwiftUI for the fronten
 
 ```
 phoneSaver/
-├── phoneS/                    # SwiftUI frontend code
-│   ├── PhoneSaver.xcodeproj   # Xcode project file
-│   ├── PhoneSaver/            # Main app code
-│   │   ├── Models/            # Data models (e.g., Contact.swift)
-│   │   ├── ViewModels/        # View models (e.g., AuthViewModel.swift)
-│   │   ├── Views/             # UI views (e.g., ContactsListView.swift)
-│   │   ├── Info.plist         # App configuration
-│   │   └── ...
-├── phonesaver-backend/        # Go backend code
-│   ├── main.go                # Main backend application
+├── ios-app/           # iOS frontend application (SwiftUI)
+│   ├── Assets.xcassets/  # App assets
+│   ├── Views/         # SwiftUI view components
+│   └── Models/        # Data models
+├── backend/           # Go backend server
+│   ├── main.go        # Main server code
+│   ├── phoneS/       # Backend services
+│   └── config/       # Configuration files
+└── android-app/      # Placeholder for Android version
 │   ├── go.mod                 # Go module dependencies
 │   ├── go.sum                 # Dependency checksums
 │   └── serviceAccountKey.json # Firebase service account key (not included in repo)
