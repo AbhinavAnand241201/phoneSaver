@@ -38,7 +38,12 @@ struct phoneSApp: App {
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        FirebaseApp.configure()
+        do {
+            try FirebaseApp.configure()
+        } catch {
+            print("Firebase configuration failed: \(error.localizedDescription)")
+            return false
+        }
         return true
     }
     
@@ -69,6 +74,26 @@ class AppState: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var showError = false
+    @Published var user: User?
+    @Published var isAuthenticated = false
+    @Published var contacts: [Contact] = []
+    
+    private let auth = Auth.auth()
+    private let db = Firestore.firestore()
+    private let keychainWrapper = KeychainWrapper()
+    
+    init() {
+        setupAuthListener()
+    }
+    
+    private func setupAuthListener() {
+        auth.addStateDidChangeListener { [weak self] _, user in
+            DispatchQueue.main.async {
+                self?.isAuthenticated = user != nil
+                self?.user = user
+            }
+        }
+    }
     
     func showError(_ message: String) {
         errorMessage = message
@@ -78,6 +103,66 @@ class AppState: ObservableObject {
     func hideError() {
         errorMessage = nil
         showError = false
+    }
+    
+    func loadContacts() {
+        isLoading = true
+        
+        db.collection("contacts").getDocuments { [weak self] snapshot, error in
+            DispatchQueue.main.async {
+                self?.isLoading = false
+                
+                if let error = error {
+                    self?.showError(error.localizedDescription)
+                    return
+                }
+                
+                guard let documents = snapshot?.documents else {
+                    self?.contacts = []
+                    return
+                }
+                
+                self?.contacts = documents.compactMap { document in
+                    try? document.data(as: Contact.self)
+                }
+            }
+        }
+    }
+    
+    func saveContact(_ contact: Contact) {
+        isLoading = true
+        
+        do {
+            let contactRef = db.collection("contacts").document(contact.id)
+            try contactRef.setData(from: contact)
+            
+            DispatchQueue.main.async {
+                self.isLoading = false
+                self.loadContacts()
+            }
+        } catch {
+            DispatchQueue.main.async {
+                self.isLoading = false
+                self.showError(error.localizedDescription)
+            }
+        }
+    }
+    
+    func deleteContact(_ contact: Contact) {
+        isLoading = true
+        
+        db.collection("contacts").document(contact.id).delete { [weak self] error in
+            DispatchQueue.main.async {
+                self?.isLoading = false
+                
+                if let error = error {
+                    self?.showError(error.localizedDescription)
+                    return
+                }
+                
+                self?.loadContacts()
+            }
+        }
     }
 }
 

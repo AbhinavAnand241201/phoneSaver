@@ -5,6 +5,8 @@ struct ContactsListView: View {
     @State private var searchText = ""
     @State private var selectedFilter: ContactFilter = .all
     @State private var showingAddContact = false
+    @State private var showingDeleteAlert = false
+    @State private var contactToDelete: Contact?
     
     enum ContactFilter {
         case all, favorites, recent, tagged(String)
@@ -20,6 +22,8 @@ struct ContactsListView: View {
     }
     
     var filteredContacts: [Contact] {
+        guard !authViewModel.errorViewModel.showError else { return [] }
+        
         let searchFiltered = searchText.isEmpty ? authViewModel.contacts : authViewModel.contacts.filter { contact in
             contact.name.localizedCaseInsensitiveContains(searchText) ||
             contact.tags.contains { $0.localizedCaseInsensitiveContains(searchText) }
@@ -44,39 +48,69 @@ struct ContactsListView: View {
     var body: some View {
         NavigationView {
             VStack {
-                // Filter Picker
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        FilterChip(title: "All", isSelected: selectedFilter == .all) {
-                            selectedFilter = .all
+                // Loading State
+                if authViewModel.isLoading {
+                    ProgressView("Loading contacts...")
+                        .padding()
+                }
+                
+                // Error State
+                if authViewModel.errorViewModel.showError {
+                    VStack {
+                        Text(authViewModel.errorViewModel.message)
+                            .foregroundColor(.red)
+                            .padding()
+                        Button("Retry") {
+                            authViewModel.loadContacts()
                         }
-                        
-                        FilterChip(title: "Favorites", isSelected: selectedFilter == .favorites) {
-                            selectedFilter = .favorites
+                        .padding()
+                    }
+                }
+                
+                // Main Content
+                if !authViewModel.isLoading && !authViewModel.errorViewModel.showError {
+                    // Filter Picker
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            FilterChip(title: "All", isSelected: selectedFilter == .all) {
+                                selectedFilter = .all
+                            }
+                            
+                            FilterChip(title: "Favorites", isSelected: selectedFilter == .favorites) {
+                                selectedFilter = .favorites
+                            }
+                            
+                            FilterChip(title: "Recent", isSelected: selectedFilter == .recent) {
+                                selectedFilter = .recent
+                            }
+                            
+                            ForEach(availableTags, id: \.self) { tag in
+                                FilterChip(title: tag, isSelected: selectedFilter == .tagged(tag)) {
+                                    selectedFilter = .tagged(tag)
+                                }
+                            }
                         }
-                        
-                        FilterChip(title: "Recent", isSelected: selectedFilter == .recent) {
-                            selectedFilter = .recent
-                        }
-                        
-                        ForEach(availableTags, id: \.self) { tag in
-                            FilterChip(title: tag, isSelected: selectedFilter == .tagged(tag)) {
-                                selectedFilter = .tagged(tag)
+                        .padding(.horizontal)
+                    }
+                    .padding(.vertical, 8)
+                    
+                    List {
+                        ForEach(filteredContacts) { contact in
+                            NavigationLink(destination: ContactDetailView(contact: contact)) {
+                                ContactRow(contact: contact)
+                                    .swipeActions(edge: .trailing) {
+                                        Button(role: .destructive) {
+                                            contactToDelete = contact
+                                            showingDeleteAlert = true
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
                             }
                         }
                     }
-                    .padding(.horizontal)
+                    .listStyle(.plain)
                 }
-                .padding(.vertical, 8)
-                
-                List {
-                    ForEach(filteredContacts) { contact in
-                        NavigationLink(destination: ContactDetailView(contact: contact)) {
-                            ContactRow(contact: contact)
-                        }
-                    }
-                }
-                .listStyle(.plain)
             }
             .searchable(text: $searchText, prompt: "Search contacts")
             .navigationTitle(selectedFilter.title)
@@ -87,6 +121,15 @@ struct ContactsListView: View {
             })
             .sheet(isPresented: $showingAddContact) {
                 AddContactView()
+            }
+            .alert("Delete Contact", isPresented: $showingDeleteAlert) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete", role: .destructive) {
+                    guard let contactToDelete = contactToDelete else { return }
+                    authViewModel.deleteContact(contactToDelete)
+                }
+            } message: {
+                Text("Are you sure you want to delete this contact?")
             }
         }
     }

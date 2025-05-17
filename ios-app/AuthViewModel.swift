@@ -17,6 +17,7 @@ class AuthViewModel: ObservableObject {
     private let db = Firestore.firestore()
     private let keychain = KeychainWrapper.standard
     private let sessionTimeout: TimeInterval = 24 * 60 * 60 // 24 hours
+    private let baseURL = URL(string: "http://localhost:8080")!
     
     enum AuthError: LocalizedError {
         case invalidCredentials
@@ -64,6 +65,7 @@ class AuthViewModel: ObservableObject {
             }
             
             isAuthenticated = true
+            self.token = token
             fetchUserProfile()
         } catch {
             logout()
@@ -75,15 +77,25 @@ class AuthViewModel: ObservableObject {
         if let tokenData = try? JSONEncoder().encode(tokenInfo) {
             keychain.set(tokenData, forKey: "tokenData")
         }
+        self.token = token
+    }
+    
+    private func handleNetworkError(_ error: Error) {
+        DispatchQueue.main.async {
+            self.errorViewModel.handleError(AuthError.networkError)
+            self.isLoading = false
+        }
+    }
+    
+    private func handleServerError(_ error: Error) {
+        DispatchQueue.main.async {
+            self.errorViewModel.handleError(AuthError.serverError)
+            self.isLoading = false
+        }
     }
     
     // MARK: - Authentication Methods
     func signup() {
-        DispatchQueue.main.async {
-            self.isLoading = true
-            self.errorMessage = nil
-        }
-        
         guard !email.isEmpty, !password.isEmpty else {
             DispatchQueue.main.async {
                 self.errorViewModel.handleError(AuthError.invalidCredentials)
@@ -92,13 +104,19 @@ class AuthViewModel: ObservableObject {
             return
         }
         
-        let url = URL(string: "http://localhost:8080/signup")!
+        let url = baseURL.appendingPathComponent("signup")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         let body: [String: String] = ["email": email, "password": password]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            handleNetworkError(error)
+            return
+        }
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }

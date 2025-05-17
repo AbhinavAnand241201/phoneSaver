@@ -78,9 +78,9 @@ type Contact struct {
 	Name            string    `json:"name"`
 	Phone           string    `json:"phone"`
 	EncryptedPhone  string    `json:"encrypted_phone"`
-	Tags            string    `json:"tags"`
+	Tags            []string  `json:"tags"`
 	LastInteraction time.Time `json:"last_interaction"`
-	Birthday        string    `json:"birthday"`
+	Birthday        time.Time `json:"birthday"`
 }
 
 type ContactUpdate struct {
@@ -102,10 +102,8 @@ var (
 	db              *sql.DB
 	firestoreClient *firestore.Client
 	config          *Config
+	jwtKey          []byte
 )
-
-// JWT key will be loaded from environment variables
-var jwtKey []byte
 
 // RateLimiter represents a rate limiter for API endpoints
 type RateLimiter struct {
@@ -464,6 +462,16 @@ func main() {
 }
 
 func signup(c *gin.Context) {
+	// Rate limiting
+	rateLimiter := NewRateLimiter(rate.Every(1*time.Minute), 100)
+	if !rateLimiter.Allow() {
+		c.JSON(http.StatusTooManyRequests, Response{
+			Success: false,
+			Error:   "Too many signup attempts. Please try again later.",
+		})
+		return
+	}
+
 	var user User
 	if err := c.ShouldBindJSON(&user); err != nil {
 		c.JSON(http.StatusBadRequest, Response{
@@ -496,8 +504,26 @@ func signup(c *gin.Context) {
 		return
 	}
 
+	// Start transaction
+	tx, err := db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to start transaction",
+		})
+		return
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		}
+	}()
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, Response{
 			Success: false,
 			Error:   "Failed to process password",
@@ -505,16 +531,68 @@ func signup(c *gin.Context) {
 		return
 	}
 
-	_, err = db.Exec("INSERT INTO users (email, password) VALUES (?, ?)", user.Email, string(hashedPassword))
+	// Insert user
+	result, err := tx.Exec("INSERT INTO users (email, password) VALUES (?, ?)", user.Email, string(hashedPassword))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, Response{
+		tx.Rollback()
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			c.JSON(http.StatusBadRequest, Response{
+				Success: false,
+				Error:   "Email already exists",
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, Response{
+				Success: false,
+				Error:   "Database error",
+			})
+		}
+		return
+	}
+
+	// Get user ID
+	lastID, err := result.LastInsertId()
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, Response{
 			Success: false,
-			Error:   "Email already exists",
+			Error:   "Failed to get user ID",
+		})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to commit transaction",
+		})
+		return
+	}
+
+	// Generate JWT token
+	claims := Claims{
+		UserID: int(lastID),
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(time.Hour * 24).Unix(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, err := token.SignedString(jwtKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{
+			Success: false,
+			Error:   "Failed to generate token",
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, Response{
+		Success: true,
+		Data: gin.H{
+			"token": signedToken,
+			"user_id": lastID,
+		},
 	})
 }
 
