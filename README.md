@@ -314,71 +314,58 @@ CREATE INDEX idx_last_interaction ON contacts(user_id, last_interaction);
 
 1. Navigate to the Frontend Directory:
 ```bash
-cd phonesaver-frontend
 ```
 
-2. Open the Project in Xcode:
-```bash
-open PhoneSaver.xcodeproj
+#### Update Last Interaction
+```http
+PUT /api/contacts/:id/last-interaction
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "last_interaction": "2024-01-01T00:00:00Z"
+}
 ```
 
-3. Install Firebase SDK:
-   - In Xcode, go to File > Add Packages.
-   - Add the Firebase SDK by entering the URL: https://github.com/firebase/firebase-ios-sdk.
-   - Select the FirebaseFirestore and FirebaseAuth packages.
+#### Update Birthday
+```http
+PUT /api/contacts/:id/birthday
+Authorization: Bearer <token>
+Content-Type: application/json
 
-4. Configure Firebase:
-   - Download the `GoogleService-Info.plist` file from your Firebase project (Project Settings > General).
-   - Add it to the PhoneSaver target in Xcode.
-   - Initialize Firebase in your AppDelegate or App struct.
+{
+  "birthday": "1990-01-01"
+}
+```
 
-5. Build and Run:
-   - Select an iOS simulator or device in Xcode.
-   - Press Cmd + R to build and run the app.
+#### Backup Contacts
+```http
+POST /api/backup
+Authorization: Bearer <token>
+Content-Type: application/json
 
-## Usage
-
-1. Start the Backend:
-   - Ensure the backend server is running (`go run main.go` in the phonesaver-backend directory).
-   - The server will be available at http://localhost:8080.
-
-2. Run the App:
-   - Launch the app in Xcode.
-   - Sign up or log in using the `/signup` or `/login` endpoints.
-   - Add contacts, manage tags, set reminders, and back up contacts to Firebase.
-
-### Key Features:
-
-- **Add a Contact**: Enter name, phone number, tags, last interaction, and birthday.
-- **Tag Contacts**: Add or remove tags to organize contacts.
-- **One-Tap Communication**: Call or message contacts directly.
-- **Set Reminders**: Schedule follow-up reminders using local notifications.
-- **Backup Contacts**: Back up contacts to Firebase for syncing.
-
-## API Endpoints
-
-The backend provides the following API endpoints:
-- All endpoints except `/signup` and `/login` require a JWT token.
-- Pass the token in the Authorization header: `Bearer <token>`.
-
-## Screenshots
-
-I'll update this section soon with actual screenshots from the app showing the user interface and key features.
+{
+  "contacts": [
+    {
+      "name": "John Doe",
+      "phone": "+1234567890",
+      "tags": ["friend", "work"]
+    }
+  ]
+}
+```
 
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature/your-feature`).
-3. Make your changes and commit (`git commit -m "Add your feature"`).
-4. Push to your branch (`git push origin feature/your-feature`).
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request.
 
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
 ## Contact
 
 Abhinav Anand - [@AbhinavAnand241201](https://github.com/AbhinavAnand241201)
