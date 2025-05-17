@@ -41,7 +41,6 @@ struct Contact: Identifiable, Codable {
     enum CodingKeys: String, CodingKey {
         case id
         case name
-        case phone
         case encryptedPhone
         case tags
         case lastInteraction
@@ -53,10 +52,9 @@ struct Contact: Identifiable, Codable {
     }
     
     // Initialize with encrypted phone
-    init(id: Int, name: String, phone: String, encryptedPhone: String, tags: String, lastInteraction: Date?, birthday: String, contactFrequency: String = "Weekly", preferredTime: String? = nil, notes: String? = nil, reminders: [Reminder]? = nil) {
+    init(id: Int, name: String, encryptedPhone: String, tags: String, lastInteraction: Date?, birthday: String, contactFrequency: String = "Weekly", preferredTime: String? = nil, notes: String? = nil, reminders: [Reminder]? = nil) {
         self.id = id
         self.name = name
-        self.phone = phone
         self.encryptedPhone = encryptedPhone
         self.tags = tags
         self.lastInteraction = lastInteraction
@@ -94,7 +92,6 @@ struct Contact: Identifiable, Codable {
         
         id = try container.decode(Int.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
-        phone = try container.decode(String.self, forKey: .phone)
         encryptedPhone = try container.decode(String.self, forKey: .encryptedPhone)
         tags = try container.decode(String.self, forKey: .tags)
         
@@ -119,7 +116,6 @@ struct Contact: Identifiable, Codable {
         
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
-        try container.encode(phone, forKey: .phone)
         try container.encode(encryptedPhone, forKey: .encryptedPhone)
         try container.encode(tags, forKey: .tags)
         
@@ -150,8 +146,8 @@ struct Reminder: Codable, Identifiable {
 
 // MARK: - Encryption/Decryption
 extension Contact {
-    // Private encryption methods
-    private static func encryptPhone(_ phone: String) throws -> String {
+    // Public encryption methods
+    static func encryptPhone(_ phone: String) throws -> String {
         guard let key = KeychainManager.shared.getEncryptionKey() else {
             throw EncryptionError.keyNotFound
         }
@@ -164,7 +160,7 @@ extension Contact {
         return sealedBox.combined?.base64EncodedString() ?? ""
     }
     
-    private static func decryptPhone(_ encryptedPhone: String) throws -> String {
+    static func decryptPhone(_ encryptedPhone: String) throws -> String {
         guard let key = KeychainManager.shared.getEncryptionKey() else {
             throw EncryptionError.keyNotFound
         }
@@ -197,7 +193,6 @@ extension Contact {
         }
         return decrypted
     }
-}
 }
 
 // MARK: - Encryption Errors
@@ -237,15 +232,16 @@ extension Contact {
         isValidBirthday(birthday)
     }
     
-    private func isValidPhoneNumber(_ number: String) -> Bool {
-        let digits = number.filter { $0.isNumber }
-        return digits.count >= 10
+    static func isValidPhoneNumber(_ phone: String) -> Bool {
+        let phoneRegex = "^[+]?[0-9]{10,15}$"
+        let phoneTest = NSPredicate(format: "SELF MATCHES %@", phoneRegex)
+        return phoneTest.evaluate(with: phone)
     }
     
-    private func isValidBirthday(_ birthday: String) -> Bool {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.date(from: birthday) != nil
+    static func isValidBirthday(_ birthday: String) -> Bool {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        return dateFormatter.date(from: birthday) != nil
     }
 }
 

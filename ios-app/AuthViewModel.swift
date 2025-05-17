@@ -104,6 +104,11 @@ class AuthViewModel: ObservableObject {
             return
         }
         
+        DispatchQueue.main.async {
+            self.isLoading = true
+            self.errorMessage = nil
+        }
+        
         let url = baseURL.appendingPathComponent("signup")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -139,7 +144,8 @@ class AuthViewModel: ObservableObject {
                     if let data = data,
                        let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
                        let token = json["token"] as? String {
-                        self.saveSession(token: token)
+                        let tokenInfo = TokenInfo(token: token, createdAt: Date())
+                        self.saveSession(token: token, tokenInfo: tokenInfo)
                         self.isAuthenticated = true
                         self.email = ""
                         self.password = ""
@@ -147,11 +153,7 @@ class AuthViewModel: ObservableObject {
                         self.errorViewModel.handleError(AuthError.invalidResponse)
                     }
                 case 400:
-                    if let data = data,
-                       let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                       let errorMessage = json["error"] as? String {
-                        self.errorViewModel.handleError(AuthError.invalidCredentials)
-                    }
+                    self.errorViewModel.handleError(AuthError.invalidCredentials)
                 default:
                     self.errorViewModel.handleError(AuthError.serverError)
                 }
@@ -160,18 +162,32 @@ class AuthViewModel: ObservableObject {
     }
     
     func login() {
+        guard !email.isEmpty, !password.isEmpty else {
+            DispatchQueue.main.async {
+                self.errorViewModel.handleError(AuthError.invalidCredentials)
+                self.isLoading = false
+            }
+            return
+        }
+        
         DispatchQueue.main.async {
             self.isLoading = true
             self.errorMessage = nil
         }
         
-        let url = URL(string: "http://localhost:8080/login")!
+        let url = baseURL.appendingPathComponent("login")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         let body: [String: String] = ["email": email, "password": password]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            handleNetworkError(error)
+            return
+        }
         
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
@@ -180,36 +196,32 @@ class AuthViewModel: ObservableObject {
                 self.isLoading = false
                 
                 if let error = error {
-                    self.errorMessage = error.localizedDescription
+                    self.errorViewModel.handleError(AuthError.networkError)
                     return
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    self.errorMessage = "Invalid server response"
+                    self.errorViewModel.handleError(AuthError.invalidResponse)
                     return
                 }
                 
-                if httpResponse.statusCode == 200 {
+                switch httpResponse.statusCode {
+                case 200:
                     if let data = data,
                        let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
                        let token = json["token"] as? String {
-                        self.token = token
+                        let tokenInfo = TokenInfo(token: token, createdAt: Date())
+                        self.saveSession(token: token, tokenInfo: tokenInfo)
                         self.isAuthenticated = true
-                        self.errorMessage = nil
                         self.email = ""
                         self.password = ""
-                        self.fetchContacts { _ in }
                     } else {
-                        self.errorMessage = "Invalid response format"
+                        self.errorViewModel.handleError(AuthError.invalidResponse)
                     }
-                } else {
-                    if let data = data,
-                       let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                       let errorMessage = json["error"] as? String {
-                        self.errorMessage = "Login failed: \(errorMessage)"
-                    } else {
-                        self.errorMessage = "Login failed: Server error"
-                    }
+                case 400:
+                    self.errorViewModel.handleError(AuthError.invalidCredentials)
+                default:
+                    self.errorViewModel.handleError(AuthError.serverError)
                 }
             }
         }.resume()

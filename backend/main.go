@@ -45,18 +45,17 @@ func LoadConfig() *Config {
 		ServerPort:     getEnv("SERVER_PORT", "8080"),
 		FirebaseConfig: getEnv("FIREBASE_CONFIG", ""),
 	}
-	
+
 	if config.DBHost == "" || config.DBPort == "" || config.DBUser == "" || config.DBPassword == "" || config.DBName == "" {
 		log.Fatal("Missing required database configuration")
 	}
-	
+
 	if config.JWTSecret == "" {
 		log.Fatal("JWT_SECRET must be set")
 	}
-	
+
 	jwtKey = []byte(config.JWTSecret)
 	return config
-}
 }
 
 func getEnv(key, defaultValue string) string {
@@ -220,22 +219,22 @@ func validateEmail(email string) bool {
 	if email == "" {
 		return false
 	}
-	
+
 	// Basic email format validation
 	if !strings.Contains(email, "@") || !strings.Contains(email, ".") {
 		return false
 	}
-	
+
 	// Check for common email patterns
 	if strings.HasPrefix(email, "@") || strings.HasSuffix(email, "@") {
 		return false
 	}
-	
+
 	// Check for multiple @ symbols
 	if strings.Count(email, "@") != 1 {
 		return false
 	}
-	
+
 	return true
 }
 
@@ -244,12 +243,12 @@ func validatePassword(password string) bool {
 	if password == "" {
 		return false
 	}
-	
+
 	// Password must be between 8-100 characters
 	if len(password) < 8 || len(password) > 100 {
 		return false
 	}
-	
+
 	// Must contain at least one uppercase letter
 	hasUpper := false
 	for _, c := range password {
@@ -261,7 +260,7 @@ func validatePassword(password string) bool {
 	if !hasUpper {
 		return false
 	}
-	
+
 	// Must contain at least one lowercase letter
 	hasLower := false
 	for _, c := range password {
@@ -273,7 +272,7 @@ func validatePassword(password string) bool {
 	if !hasLower {
 		return false
 	}
-	
+
 	// Must contain at least one number
 	hasNumber := false
 	for _, c := range password {
@@ -285,7 +284,7 @@ func validatePassword(password string) bool {
 	if !hasNumber {
 		return false
 	}
-	
+
 	return true
 }
 
@@ -590,7 +589,7 @@ func signup(c *gin.Context) {
 	c.JSON(http.StatusOK, Response{
 		Success: true,
 		Data: gin.H{
-			"token": signedToken,
+			"token":   signedToken,
 			"user_id": lastID,
 		},
 	})
